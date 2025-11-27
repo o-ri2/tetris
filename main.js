@@ -21,6 +21,9 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0xffffff, 0.65);
 hemisphereLight.position.set(0, 50, 0);
 scene.add(hemisphereLight);
+const mainFrontLight = new THREE.DirectionalLight(0xffffff, 0.65);
+mainFrontLight.position.set(0, -5, 70);
+scene.add(mainFrontLight);
 const frontTopLeft = new THREE.DirectionalLight(0xffffff, 0.28);
 frontTopLeft.position.set(-25, 15, 60);
 scene.add(frontTopLeft);
@@ -125,30 +128,21 @@ let isAssetsLoaded = false;
 function initializeGame() {
   isAssetsLoaded = true;
   createGridBackground();
-  const startScreen = document.getElementById('start-screen');
-  if (!startScreen) {
-    return;
+  if (listener.context.state === 'suspended') {
+    listener.context.resume();
   }
-  startScreen.style.opacity = 1;
-  startScreen.addEventListener('click', () => {
-    if (listener.context.state === 'suspended') {
-      listener.context.resume();
-    }
-    startScreen.style.opacity = 0;
-    setTimeout(() => startScreen.style.display = 'none', 1000);
-    try {
-      if (!bgmNature.isPlaying) bgmNature.play();
-      if (!bgmCity.isPlaying) bgmCity.play();
-    } catch (error) {
-    }
-    gameRunning = true;
-    gameStartTime = performance.now();
-    lastGravityCollapseTime = gameStartTime;
-    isGravityCollapsing = false;
-    cachedBlockCount = 0;
-    if (!isSpawningPaused && !isGravityCollapsing) resetPlayer();
-    animate(); 
-  }, { once: true });
+  try {
+    if (!bgmNature.isPlaying) bgmNature.play();
+    if (!bgmCity.isPlaying) bgmCity.play();
+  } catch (error) {
+  }
+  gameRunning = true;
+  gameStartTime = performance.now();
+  lastGravityCollapseTime = gameStartTime;
+  isGravityCollapsing = false;
+  cachedBlockCount = 0;
+  if (!isSpawningPaused && !isGravityCollapsing) resetPlayer();
+  animate();
 }
 async function loadAssets() {
   await Promise.all(materialNames.map(async name => {
@@ -689,10 +683,10 @@ function applyGravityToAllBlocks() {
 }
 function triggerGravityCollapseForDeletedBlocks(deletedPositions, now) {
   isGravityCollapsing = true;
-  const processedBlocks = new Set();
   const blocksToFall = [];
+  const processedBlocks = new Set();
   
-  // 먼저 삭제된 위치 위의 모든 블럭을 수집
+  // 1단계: 삭제된 위치 아래쪽 블럭들 처리
   deletedPositions.forEach(({ x, y: deletedY }) => {
     for (let y = deletedY + 1; y < GRID_HEIGHT; y++) {
       const block = board[y][x];
@@ -708,6 +702,44 @@ function triggerGravityCollapseForDeletedBlocks(deletedPositions, now) {
       board[y][x] = null;
     }
   });
+  
+  // 2단계: 전체 보드를 재검사하여 지지대가 없는 모든 블럭 찾기
+  let hasFloatingBlocks = true;
+  let iterationCount = 0;
+  const MAX_ITERATIONS = 50; // 무한 루프 방지
+  
+  while (hasFloatingBlocks && iterationCount < MAX_ITERATIONS) {
+    hasFloatingBlocks = false;
+    iterationCount++;
+    
+    // 아래에서 위로 스캔하여 지지대가 없는 블럭 찾기
+    for (let y = 1; y < GRID_HEIGHT; y++) {
+      const row = board[y];
+      if (!row) continue;
+      for (let x = 0; x < GRID_WIDTH; x++) {
+        const block = row[x];
+        if (!block) continue;
+        const blockKey = `${x},${y}`;
+        if (processedBlocks.has(blockKey)) continue;
+        
+        // 지지대 확인: 아래쪽(y-1)에 블럭이 있어야 함
+        // y=1일 때 아래는 y=0인데, y=0은 바닥이므로 지지대가 있는 것으로 간주
+        const rowBelow = board[y - 1];
+        const hasSupportBelow = (y - 1 === 0) || (rowBelow && rowBelow[x] !== null);
+        
+        if (!hasSupportBelow) {
+          hasFloatingBlocks = true;
+          processedBlocks.add(blockKey);
+          blocksToFall.push({
+            block: block,
+            gridX: x,
+            gridY: y
+          });
+          board[y][x] = null;
+        }
+      }
+    }
+  }
   
   if (blocksToFall.length > 0) {
     playCollapseSound(blocksToFall.length, 0.6);
@@ -748,45 +780,17 @@ function triggerGravityCollapseForDeletedBlocks(deletedPositions, now) {
       properties: properties
     });
   });
-  
-  // 중력 적용 후 떠 있는 블럭들도 체크
-  setTimeout(() => {
-    if (!isGravityCollapsing || sandBlocks.length === 0) {
-      checkAndFixFloatingBlocks(performance.now());
-    }
-  }, 100);
 }
 function checkAndFixFloatingBlocks(now) {
-  if (isGravityCollapsing && sandBlocks.length > 0) {
-    // 이미 중력 처리 중이면 잠시 후 다시 체크
-    setTimeout(() => {
-      if (!isGravityCollapsing || sandBlocks.length === 0) {
-        checkAndFixFloatingBlocks(performance.now());
-      }
-    }, 200);
-    return true;
-  }
-  
   const floatingBlocks = [];
-  const processedBlocks = new Set();
-  
-  // 바닥부터 위로 스캔하여 떠 있는 블럭들을 찾음
   for (let y = 1; y < GRID_HEIGHT; y++) {
     const row = board[y];
     if (!row) continue;
     for (let x = 0; x < GRID_WIDTH; x++) {
       const block = row[x];
-      if (!block || !block.mesh) continue;
-      
-      const blockKey = `${x},${y}`;
-      if (processedBlocks.has(blockKey)) continue;
-      
+      if (!block) continue;
       const rowBelow = board[y - 1];
-      const isGround = y === 0;
-      const hasSupport = isGround || (rowBelow && rowBelow[x] !== null);
-      
-      if (!hasSupport) {
-        processedBlocks.add(blockKey);
+      if (!rowBelow || rowBelow[x] === null) {
         floatingBlocks.push({
           block: block,
           gridX: x,
@@ -795,22 +799,15 @@ function checkAndFixFloatingBlocks(now) {
       }
     }
   }
-  
   if (floatingBlocks.length > 0) {
     isGravityCollapsing = true;
     floatingBlocks.forEach((item, index) => {
       const block = item.block;
       const mesh = block.mesh;
-      if (!mesh || !block) return;
-      
       const properties = block.properties || blockProperties[block.materialName];
       board[item.gridY][item.gridX] = null;
-      
-      if (mesh.parent === landedCubes) {
-        landedCubes.remove(mesh);
-      }
+      landedCubes.remove(mesh);
       scene.add(mesh);
-      
       const weightMultiplier = properties ? properties.weight : 1.0;
       const durabilityMultiplier = properties ? (1.0 / properties.durability) : 1.0;
       sandBlocks.push({
@@ -840,10 +837,7 @@ function checkAndFixFloatingBlocks(now) {
         properties: properties
       });
     });
-    return true; // 떠 있는 블럭이 있음
   }
-  
-  return false; // 떠 있는 블럭이 없음
 }
 function disposeMesh(mesh) {
   if (!mesh) return;
@@ -1090,18 +1084,6 @@ function animate() {
             scene.remove(mesh);
             landedCubes.add(mesh);
             sandBlocks.splice(i, 1);
-            
-            // 착지 후 지지 상태를 다시 확인하여 떠 있는 블럭이 있으면 처리
-            const checkY = currentGridY + 1;
-            if (checkY < GRID_HEIGHT && board[checkY] && board[checkY][currentGridX]) {
-              const blockAbove = board[checkY][currentGridX];
-              if (blockAbove && blockAbove.mesh) {
-                const aboveBlockKey = `${currentGridX},${checkY}`;
-                setTimeout(() => {
-                  checkAndFixFloatingBlocks(performance.now());
-                }, 50);
-              }
-            }
             continue;
           }
         }
@@ -1113,19 +1095,14 @@ function animate() {
     }
   }
   if (isGravityCollapsing && sandBlocks.length === 0) {
-    // 중력 처리 완료 후 떠 있는 블럭이 있는지 체크
-    const floatingCheck = checkAndFixFloatingBlocks(now);
-    if (floatingCheck === false) {
-      // 떠 있는 블럭이 없으면 중력 처리 완료
-      isGravityCollapsing = false;
-      isSpawningPaused = false; 
-      stopAllCrumbleSounds();
-      setTimeout(() => {
-        if (gameRunning && !player.shape) {
-          resetPlayer();
-        }
-      }, 500);
-    }
+    isGravityCollapsing = false;
+    isSpawningPaused = false; 
+    stopAllCrumbleSounds();
+    setTimeout(() => {
+      if (gameRunning && !player.shape) {
+        resetPlayer();
+      }
+    }, 500);
   }
   if (gameOverPhase === 'gravity' && sandBlocks.length === 0) {
     gameOverPhase = 'settled';
