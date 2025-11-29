@@ -1257,6 +1257,11 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 window.addEventListener('keydown', (event) => {
+  // F11은 전체화면 모드 전환을 위해 항상 허용
+  if (event.code === 'F11') {
+    return;
+  }
+  
   // Alt+F4는 허용 (OS 레벨이므로 웹에서 제어 불가)
   // 다른 종료/새로고침 관련 키 조합 차단
   if (event.code === 'F5' || 
@@ -1303,10 +1308,7 @@ window.addEventListener('keydown', (event) => {
       break;
     }
     default: {
-      // F11은 전체화면 모드 전환을 위해 허용
-      if (event.code !== 'F11') {
-        event.preventDefault();
-      }
+      event.preventDefault();
       break;
     }
   }
