@@ -1303,7 +1303,10 @@ window.addEventListener('keydown', (event) => {
       break;
     }
     default: {
-      event.preventDefault();
+      // F11은 전체화면 모드 전환을 위해 허용
+      if (event.code !== 'F11') {
+        event.preventDefault();
+      }
       break;
     }
   }
