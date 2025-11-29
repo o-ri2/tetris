@@ -125,17 +125,57 @@ async function createMaterialSet(name, isGlass, isWire) {
 }
 let materials = {};
 let isAssetsLoaded = false;
+let audioStarted = false;
+
+function startAudio() {
+  if (audioStarted) return;
+  audioStarted = true;
+  
+  const playBGM = () => {
+    if (bgmNatureLoaded && !bgmNature.isPlaying && bgmNature.buffer) {
+      bgmNature.play().catch(err => console.error('BGM Nature play error:', err));
+    }
+    if (bgmCityLoaded && !bgmCity.isPlaying && bgmCity.buffer) {
+      bgmCity.play().catch(err => console.error('BGM City play error:', err));
+    }
+  };
+  
+  if (listener.context.state === 'suspended') {
+    listener.context.resume().then(() => {
+      playBGM();
+    }).catch(err => {
+      console.error('Audio context resume error:', err);
+    });
+  } else {
+    playBGM();
+  }
+}
+
 function initializeGame() {
   isAssetsLoaded = true;
   createGridBackground();
-  if (listener.context.state === 'suspended') {
-    listener.context.resume();
-  }
-  try {
-    if (!bgmNature.isPlaying) bgmNature.play();
-    if (!bgmCity.isPlaying) bgmCity.play();
-  } catch (error) {
-  }
+  
+  // 사용자 인터랙션 감지하여 오디오 시작
+  const startAudioOnInteraction = () => {
+    startAudio();
+    document.removeEventListener('click', startAudioOnInteraction);
+    document.removeEventListener('keydown', startAudioOnInteraction);
+    document.removeEventListener('keypress', startAudioOnInteraction);
+    document.removeEventListener('touchstart', startAudioOnInteraction);
+  };
+  
+  document.addEventListener('click', startAudioOnInteraction, { once: true });
+  document.addEventListener('keydown', startAudioOnInteraction, { once: true });
+  document.addEventListener('keypress', startAudioOnInteraction, { once: true });
+  document.addEventListener('touchstart', startAudioOnInteraction, { once: true });
+  
+  // 약간의 지연 후 자동으로 시도 (일부 브라우저에서 작동할 수 있음)
+  setTimeout(() => {
+    if (!audioStarted) {
+      startAudio();
+    }
+  }, 1000);
+  
   gameRunning = true;
   gameStartTime = performance.now();
   lastGravityCollapseTime = gameStartTime;
@@ -193,15 +233,26 @@ soundNames.forEach(name => {
   });
   soundsLoadingPromises.push(promise);
 });
+let bgmNatureLoaded = false;
+let bgmCityLoaded = false;
+
 audioLoader.load('sounds/bgm_nature.mp3', buffer => {
   bgmNature.setBuffer(buffer);
   bgmNature.setLoop(true);
-  bgmNature.setVolume(0.5); 
+  bgmNature.setVolume(0.5);
+  bgmNatureLoaded = true;
+  if (audioStarted && !bgmNature.isPlaying) {
+    bgmNature.play().catch(err => console.error('BGM Nature play error:', err));
+  }
 }, undefined, undefined);
 audioLoader.load('sounds/bgm_city.mp3', buffer => {
   bgmCity.setBuffer(buffer);
   bgmCity.setLoop(true);
-  bgmCity.setVolume(0); 
+  bgmCity.setVolume(0);
+  bgmCityLoaded = true;
+  if (audioStarted && !bgmCity.isPlaying) {
+    bgmCity.play().catch(err => console.error('BGM City play error:', err));
+  }
 }, undefined, undefined);
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
@@ -323,6 +374,8 @@ function isValidMove(pos, shape, shapeWithIDs = null) {
 }
 function resetPlayer() {
   if (!isAssetsLoaded) return;
+  // 중력 붕괴 중이거나 스폰이 일시정지된 경우 블럭 생성하지 않음
+  if (isGravityCollapsing || isSpawningPaused) return;
   const matKeys = Object.keys(materials);
   if (matKeys.length === 0) return;
   const shapeIndex = Math.floor(Math.random() * (SHAPES.length - 1)) + 1;
@@ -683,6 +736,15 @@ function applyGravityToAllBlocks() {
 }
 function triggerGravityCollapseForDeletedBlocks(deletedPositions, now) {
   isGravityCollapsing = true;
+  isSpawningPaused = true;
+  
+  // 중력 붕괴 시작 시 현재 플레이어 블럭 제거
+  if (player.shape) {
+    player.shape = null;
+    player.shapeWithIDs = null;
+    playerGroup.clear();
+  }
+  
   const blocksToFall = [];
   const processedBlocks = new Set();
   
@@ -961,7 +1023,8 @@ function animate() {
     } else {
       mergeToBoard();
       lastBlockCountUpdate = 0;
-      if (gameRunning && !isSpawningPaused && !isGravityCollapsing) {
+      // 중력 붕괴 중이거나 스폰이 일시정지된 경우 블럭 생성하지 않음
+      if (gameRunning && !isSpawningPaused && !isGravityCollapsing && !player.shape) {
         resetPlayer();
       }
     }
@@ -1096,9 +1159,10 @@ function animate() {
   }
   if (isGravityCollapsing && sandBlocks.length === 0) {
     isGravityCollapsing = false;
-    isSpawningPaused = false; 
     stopAllCrumbleSounds();
+    // 중력 붕괴가 완전히 끝난 후에만 블럭 생성 재개
     setTimeout(() => {
+      isSpawningPaused = false;
       if (gameRunning && !player.shape) {
         resetPlayer();
       }
@@ -1193,7 +1257,21 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 window.addEventListener('keydown', (event) => {
-  if (!player.shape || !gameRunning) return;
+  // Alt+F4는 허용 (OS 레벨이므로 웹에서 제어 불가)
+  // 다른 종료/새로고침 관련 키 조합 차단
+  if (event.code === 'F5' || 
+      (event.ctrlKey && (event.key === 'r' || event.key === 'R')) ||
+      (event.ctrlKey && (event.key === 'w' || event.key === 'W')) ||
+      (event.ctrlKey && event.shiftKey && (event.key === 'T' || event.key === 't')) ||
+      (event.metaKey && (event.key === 'r' || event.key === 'R'))) {
+    event.preventDefault();
+    return;
+  }
+
+  if (!player.shape || !gameRunning) {
+    event.preventDefault();
+    return;
+  }
   switch (event.code) {
     case 'ArrowLeft': {
       const next = { x: player.pos.x - 1, y: player.pos.y };
@@ -1224,5 +1302,16 @@ window.addEventListener('keydown', (event) => {
       hardDrop();
       break;
     }
+    default: {
+      event.preventDefault();
+      break;
+    }
   }
+});
+
+// 페이지를 떠나려는 시도 차단 (Alt+F4는 OS 레벨이므로 여기서는 제어 불가)
+window.addEventListener('beforeunload', (event) => {
+  event.preventDefault();
+  event.returnValue = '';
+  return '';
 });
