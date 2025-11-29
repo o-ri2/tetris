@@ -1257,43 +1257,32 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 window.addEventListener('keydown', (event) => {
-  // F11은 전체화면 모드 전환을 위해 항상 허용
-  if (event.code === 'F11') {
+  // 게임이 실행 중이고 플레이어 블록이 있을 때만 게임 컨트롤 처리
+  if (!player.shape || !gameRunning) {
     return;
   }
   
-  // Alt+F4는 허용 (OS 레벨이므로 웹에서 제어 불가)
-  // 다른 종료/새로고침 관련 키 조합 차단
-  if (event.code === 'F5' || 
-      (event.ctrlKey && (event.key === 'r' || event.key === 'R')) ||
-      (event.ctrlKey && (event.key === 'w' || event.key === 'W')) ||
-      (event.ctrlKey && event.shiftKey && (event.key === 'T' || event.key === 't')) ||
-      (event.metaKey && (event.key === 'r' || event.key === 'R'))) {
-    event.preventDefault();
-    return;
-  }
-
-  if (!player.shape || !gameRunning) {
-    event.preventDefault();
-    return;
-  }
   switch (event.code) {
     case 'ArrowLeft': {
+      event.preventDefault();
       const next = { x: player.pos.x - 1, y: player.pos.y };
       if (isValidMove(next, player.shape)) player.pos = next;
       break;
     }
     case 'ArrowRight': {
+      event.preventDefault();
       const next = { x: player.pos.x + 1, y: player.pos.y };
       if (isValidMove(next, player.shape)) player.pos = next;
       break;
     }
     case 'ArrowDown': {
+      event.preventDefault();
       const next = { x: player.pos.x, y: player.pos.y - 1 };
       if (isValidMove(next, player.shape)) player.pos = next;
       break;
     }
     case 'ArrowUp': {
+      event.preventDefault();
       const rotated = rotateShape(player.shape);
       const rotatedWithIDs = rotateShapeWithIDs(player.shapeWithIDs);
       if (isValidMove(player.pos, rotated)) {
@@ -1304,19 +1293,13 @@ window.addEventListener('keydown', (event) => {
       break;
     }
     case 'Space': {
+      event.preventDefault();
       hardDrop();
       break;
     }
     default: {
-      event.preventDefault();
+      // 게임 컨트롤 키가 아니면 그냥 통과 (F11 등 모든 키 허용)
       break;
     }
   }
-});
-
-// 페이지를 떠나려는 시도 차단 (Alt+F4는 OS 레벨이므로 여기서는 제어 불가)
-window.addEventListener('beforeunload', (event) => {
-  event.preventDefault();
-  event.returnValue = '';
-  return '';
 });
